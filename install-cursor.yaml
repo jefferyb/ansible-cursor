@@ -1,0 +1,76 @@
+---
+### A Quick HowTo:
+# To install or update Cursor on Linux using this Ansible Playbook
+# $ ansible-playbook install-cursor.yaml
+#
+# If you want to install it on a remote machine/host, you can use something like:
+# $ ansible-playbook install-cursor.yaml -e host=your-remote-machine
+###
+- name: Install or Update Cursor Editor
+  hosts: "{{ host | default('localhost') }}"
+  tags: install::cursor
+  vars:
+    cursor_base_dir: "{{ ansible_user_dir }}/.local"
+    cursor_install_dir: "{{ cursor_base_dir }}/opt/cursor"
+    cursor_appimage_path: "{{ cursor_install_dir }}/cursor.AppImage"
+    cursor_icon_path: "{{ cursor_install_dir }}/cursor.svg"
+    cursor_desktop_dir: "{{ cursor_base_dir }}/share/applications"
+    cursor_desktop_path: "{{ cursor_desktop_dir }}/cursor.desktop"
+    cursor_api_arch_map:
+      x86_64: 'linux-x64'
+      aarch64: 'linux-arm64'
+      arm64: 'linux-arm64' # Include arm64 as an alias for aarch64
+
+  tasks:
+    - name: Install or Update Cursor Editor
+      when: ansible_system == "Linux"
+      block:
+        - name: Ensure target directories exist
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            mode: '0755'
+          loop:
+            - "{{ cursor_install_dir }}"
+            - "{{ cursor_desktop_dir }}"
+
+        - name: "Fetch latest download URL from Cursor API for {{ ansible_architecture }}"
+          ansible.builtin.uri:
+            url: "https://www.cursor.com/api/download?platform={{ cursor_api_arch_map[ansible_architecture] }}&releaseTrack=stable"
+            method: GET
+            return_content: yes
+            status_code: 200
+          register: cursor_api_response
+
+        - name: Check if icon file exists
+          ansible.builtin.stat:
+            path: "{{ cursor_icon_path }}"
+          register: icon_file_stat
+
+        # https://forum.cursor.com/t/is-there-a-cursor-logo-available/6319
+        - name: Download cursor icon if missing
+          ansible.builtin.get_url:
+            url: 'https://www.cursor.com/assets/images/logo.svg'
+            dest: "{{ cursor_icon_path }}"
+            mode: '0644'
+          when: not icon_file_stat.stat.exists
+
+        - name: "Download/Update Cursor AppImage for {{ ansible_architecture }}"
+          ansible.builtin.get_url:
+            url: "{{ cursor_api_response.json.downloadUrl }}"
+            dest: "{{ cursor_appimage_path }}"
+            mode: '0755'
+
+        - name: Create/Update application desktop entry
+          ansible.builtin.copy:
+            content: |
+              [Desktop Entry]
+              Name=Cursor
+              Comment=AI-first Code Editor
+              Exec={{ cursor_appimage_path }}
+              Icon={{ cursor_icon_path }}
+              Terminal=false
+              Type=Application
+              Categories=Development;TextEditor;IDE;
+            dest: "{{ cursor_desktop_path }}"
+            mode: '0644'
